@@ -1,12 +1,5 @@
 from preprocess_data import get_log_returns
-import numpy as np
-from statsmodels.tsa.stattools import adfuller
-from statsmodels.graphics.tsaplots import plot_acf
-from statsmodels.stats.diagnostic import het_arch
-from arch import arch_model
-from statsmodels.stats.diagnostic import acorr_ljungbox
-from scipy.stats import jarque_bera
-from garch import garch_modeling
+from garch import garch_modelling
 
 
 DE_MEAN = "AR"   # arch_model mean specification: "Constant" or "AR" (demeaning built in)
@@ -20,4 +13,10 @@ if __name__ == "__main__":
 
     print(log_returns)
 
-    garch_results, sigma_forecast = garch_modeling(log_returns)
+    garch_results, sigma_forecast = garch_modelling(log_returns, DE_MEAN, MODEL, DISTRIBUTION, validity_checks)
+
+# Next Steps:
+#   - Convert variance forecasts, i.e. IV comparison
+#   - Build a delta-hedged vol PnL
+#   - Add rolling re-estimation
+#   - Test signal stability over regimes

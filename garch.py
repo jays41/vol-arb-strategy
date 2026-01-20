@@ -5,9 +5,8 @@ from statsmodels.stats.diagnostic import het_arch
 from arch import arch_model
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from scipy.stats import jarque_bera
-from main import DE_MEAN, MODEL, DISTRIBUTION, validity_checks
 
-def garch_modelling(log_returns):
+def garch_modelling(log_returns, DE_MEAN, MODEL, DISTRIBUTION, validity_checks):
 
     # ADF test
     adf_result = adfuller(log_returns)
@@ -56,7 +55,9 @@ def garch_modelling(log_returns):
     if validity_checks:
         print("\n Validity Checks: \n")
 
-        res_check = garch_res.alpha + garch_res.beta
+        alpha = garch_res.params.get('alpha[1]', 0)
+        beta = garch_res.params.get('beta[1]', 0)
+        res_check = alpha + beta
         if res_check >= 1:
             print("⚠️ WARNING: Model may be non-stationary (alpha + beta >= 1).")
         else:
@@ -84,14 +85,14 @@ def garch_modelling(log_returns):
             print("✅ Ljung-Box Squared test passed.")
 
         if MODEL != "EGARCH":
-            arch_test_resid = het_arch(std_resid)
+            std_resid_clean = std_resid.dropna()
+            arch_test_resid = het_arch(std_resid_clean)
             if arch_test_resid[1] < 0.05:
                 print("⚠️ WARNING: ARCH effect remains in standardized residuals.")
             else:
                 print("✅ ARCH-ML Passed.")
 
-        jb_stat, jb_p, _, _ = jarque_bera(std_resid)
-        print("JB p-value:", jb_p)
+        jb_stat, jb_p = jarque_bera(std_resid)
         if jb_p < 0.05:
             print("⚠️ WARNING: Standardized residuals are not normally distributed.")
         else:
@@ -113,8 +114,4 @@ def garch_modelling(log_returns):
 
     return garch_res, sigma_forecast
 
-# Next Steps:
-#   - Convert variance forecasts, i.e. IV comparison
-#   - Build a delta-hedged vol PnL
-#   - Add rolling re-estimation
-#   - Test signal stability over regimes
+
