@@ -110,7 +110,7 @@ def garch_modelling(log_returns, DE_MEAN, MODEL, DISTRIBUTION, validity_checks):
 
     forecast = garch_res.forecast(horizon=1)
     sigma_forecast = forecast.variance.iloc[-1, 0] ** 0.5
-    print("\n \n \n Next period volatility forecast:", sigma_forecast)
+    print("Next period volatility forecast:", sigma_forecast)
 
     return garch_res, sigma_forecast
 
