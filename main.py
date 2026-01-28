@@ -1,6 +1,7 @@
 from preprocess_data import get_log_returns
 from garch import garch_modelling
-
+from implied_vol_surface import ImpliedVolSurface
+from Delta_Hedging import DeltaHedger
 
 DE_MEAN = "AR"   # arch_model mean specification: "Constant" or "AR" (demeaning built in)
 MODEL = "GARCH"  # vol model: "GARCH", "EGARCH"
@@ -11,7 +12,7 @@ if __name__ == "__main__":
 
     log_returns = get_log_returns("vol-arb-strategy/s&p_data.csv")
 
-    print(log_returns)
+    # print(log_returns)
 
     garch_results, sigma_forecast = garch_modelling(log_returns, DE_MEAN, MODEL, DISTRIBUTION, validity_checks)
 
