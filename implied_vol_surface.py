@@ -60,8 +60,17 @@ class ImpliedVolSurface:
         for i, K in enumerate(self.strikes):
             for j, T in enumerate(self.maturities):
                 price = self.market_prices[i, j]
-                iv = self.implied_volatility(price, K, T, 'call')
-                iv_surface[i, j] = iv
+                
+                # Skip if price is invalid or too close to zero
+                if np.isnan(price) or price <= 0.01:
+                    iv_surface[i, j] = np.nan
+                    continue
+                
+                try:
+                    iv = self.implied_volatility(price, K, T, 'call')
+                    iv_surface[i, j] = iv
+                except (ValueError, RuntimeError):
+                    iv_surface[i, j] = np.nan
         
         return iv_surface
     

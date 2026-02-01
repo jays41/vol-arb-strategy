@@ -5,30 +5,12 @@ from scipy.stats import norm
 
 
 class DeltaHedger:
-    """
-    Delta hedging calculations for options positions.
-    Calculates exact number of shares needed to neutralize delta exposure.
-    """
-    
     def __init__(self, spot_price, risk_free_rate, dividend_yield=0.0):
-        """
-        Initialize the delta hedger.
-        
-        Parameters:
-        -----------
-        spot_price : float
-            Current spot price
-        risk_free_rate : float
-            Risk-free rate (annualized)
-        dividend_yield : float
-            Dividend yield (annualized)
-        """
         self.spot_price = spot_price
         self.risk_free_rate = risk_free_rate
         self.dividend_yield = dividend_yield
     
     def black_scholes_call(self, S, K, T, r, sigma, q=0.0):
-        """Calculate Black-Scholes call price."""
         if T <= 0:
             return max(S - K, 0)
         d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
@@ -37,7 +19,6 @@ class DeltaHedger:
         return call_price
     
     def black_scholes_put(self, S, K, T, r, sigma, q=0.0):
-        """Calculate Black-Scholes put price."""
         if T <= 0:
             return max(K - S, 0)
         d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
@@ -46,66 +27,24 @@ class DeltaHedger:
         return put_price
     
     def calculate_call_delta(self, S, K, T, r, sigma, q=0.0):
-        """Calculate call delta (sensitivity to spot price change)."""
         if T <= 0:
             return 1.0 if S > K else 0.0
         d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
         return np.exp(-q * T) * norm.cdf(d1)
     
     def calculate_put_delta(self, S, K, T, r, sigma, q=0.0):
-        """Calculate put delta (sensitivity to spot price change)."""
         if T <= 0:
             return -1.0 if S < K else 0.0
         d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
         return -np.exp(-q * T) * norm.cdf(-d1)
     
     def calculate_straddle_delta(self, S, K, T, r, sigma, q=0.0):
-        """
-        Calculate delta for a long straddle (long call + long put).
-        
-        Parameters:
-        -----------
-        S : float
-            Current spot price
-        K : float
-            Strike price
-        T : float
-            Time to expiration (years)
-        r : float
-            Risk-free rate
-        sigma : float
-            Implied volatility
-        q : float
-            Dividend yield
-        
-        Returns:
-        --------
-        float : Straddle delta
-        """
         call_delta = self.calculate_call_delta(S, K, T, r, sigma, q)
         put_delta = self.calculate_put_delta(S, K, T, r, sigma, q)
         straddle_delta = call_delta + put_delta
         return straddle_delta
     
     def calculate_hedge_position(self, S, K, T, sigma):
-        """
-        Calculate exact number of shares needed to hedge delta.
-        
-        Parameters:
-        -----------
-        S : float
-            Current spot price
-        K : float
-            Strike price
-        T : float
-            Time to expiration (years)
-        sigma : float
-            Implied volatility
-        
-        Returns:
-        --------
-        dict : Hedge position details
-        """
         straddle_delta = self.calculate_straddle_delta(S, K, T, self.risk_free_rate, sigma, self.dividend_yield)
         
         # To neutralize delta, we need to short straddle_delta shares
@@ -129,44 +68,10 @@ class DeltaHedger:
         }
     
     def needs_rehedge(self, old_delta, new_delta, rehedge_threshold=0.10):
-        """
-        Determine if position needs rehedging.
-        
-        Parameters:
-        -----------
-        old_delta : float
-            Previous delta
-        new_delta : float
-            Current delta
-        rehedge_threshold : float
-            Delta change threshold to trigger rehedge
-        
-        Returns:
-        --------
-        bool : True if rehedge needed
-        """
         delta_change = abs(new_delta - old_delta)
         return delta_change >= rehedge_threshold
     
     def analyze_rehedge_points(self, K, T, sigma, spot_range=0.10):
-        """
-        Analyze rehedge requirements across spot price range.
-        
-        Parameters:
-        -----------
-        K : float
-            Strike price
-        T : float
-            Time to expiration
-        sigma : float
-            Implied volatility
-        spot_range : float
-            Range of spot prices to analyze (e.g., 0.10 = ±10%)
-        
-        Returns:
-        --------
-        DataFrame : Rehedge analysis
-        """
         # Generate spot prices from -spot_range% to +spot_range%
         spot_moves = np.linspace(-spot_range, spot_range, 21)
         spots = self.spot_price * (1 + spot_moves)
@@ -195,48 +100,12 @@ class DeltaHedger:
         return pd.DataFrame(rehedge_data)
     
     def calculate_gamma_pnl(self, K, T, sigma, spot_move):
-        """
-        Calculate P&L from gamma exposure (profit from spot movement).
-        
-        Parameters:
-        -----------
-        K : float
-            Strike price
-        T : float
-            Time to expiration
-        sigma : float
-            Implied volatility
-        spot_move : float
-            Spot price movement in dollars
-        
-        Returns:
-        --------
-        float : P&L from gamma
-        """
         d1 = (np.log(self.spot_price / K) + (self.risk_free_rate - self.dividend_yield + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
         gamma = np.exp(-self.dividend_yield * T) * norm.pdf(d1) / (self.spot_price * sigma * np.sqrt(T))
         gamma_pnl = 0.5 * gamma * (spot_move ** 2)
         return gamma_pnl
     
     def calculate_vega_pnl(self, K, T, current_iv, forecast_iv):
-        """
-        Calculate P&L if IV moves to forecast level.
-        
-        Parameters:
-        -----------
-        K : float
-            Strike price
-        T : float
-            Time to expiration
-        current_iv : float
-            Current implied volatility
-        forecast_iv : float
-            Forecasted implied volatility
-        
-        Returns:
-        --------
-        dict : Vega P&L analysis
-        """
         # Current straddle value
         call_curr = self.black_scholes_call(self.spot_price, K, T, self.risk_free_rate, current_iv, self.dividend_yield)
         put_curr = self.black_scholes_put(self.spot_price, K, T, self.risk_free_rate, current_iv, self.dividend_yield)
@@ -264,24 +133,6 @@ class DeltaHedger:
         }
     
     def calculate_theta_pnl(self, K, T, sigma, days=1):
-        """
-        Calculate daily theta decay (time value loss).
-        
-        Parameters:
-        -----------
-        K : float
-            Strike price
-        T : float
-            Time to expiration
-        sigma : float
-            Implied volatility
-        days : int
-            Number of days to calculate theta for
-        
-        Returns:
-        --------
-        float : Theta P&L for specified days
-        """
         # Theta is typically calculated per day and is negative for long options
         d1 = (np.log(self.spot_price / K) + (self.risk_free_rate - self.dividend_yield + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
         d2 = d1 - sigma * np.sqrt(T)
@@ -300,26 +151,6 @@ class DeltaHedger:
         return straddle_theta
     
     def simulate_hedge_pnl(self, K, T, current_iv, forecast_iv, spot_moves=None):
-        """
-        Simulate P&L across different spot moves and IV scenarios.
-        
-        Parameters:
-        -----------
-        K : float
-            Strike price
-        T : float
-            Time to expiration
-        current_iv : float
-            Current IV
-        forecast_iv : float
-            Forecasted IV
-        spot_moves : array-like
-            Spot moves to test (in %)
-        
-        Returns:
-        --------
-        DataFrame : P&L simulation results
-        """
         if spot_moves is None:
             spot_moves = np.linspace(-0.10, 0.10, 21)  # -10% to +10%
         
@@ -331,8 +162,7 @@ class DeltaHedger:
             spot_change = self.spot_price * move
             gamma_pnl = self.calculate_gamma_pnl(K, T, current_iv, spot_change)
             theta_pnl = self.calculate_theta_pnl(K, T, current_iv, days=1)
-            
-            # Total P&L = gamma (from spot move) + vega (from IV change) + theta (daily decay)
+
             total_pnl = gamma_pnl + vega_pnl + theta_pnl
             
             results.append({
@@ -347,7 +177,6 @@ class DeltaHedger:
         return pd.DataFrame(results)
     
     def plot_rehedge_requirements(self, K, T, sigma, spot_range=0.10):
-        """Plot rehedge triggers across spot price range."""
         df = self.analyze_rehedge_points(K, T, sigma, spot_range)
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
@@ -378,7 +207,6 @@ class DeltaHedger:
         return fig
     
     def plot_hedge_pnl_breakdown(self, K, T, current_iv, forecast_iv):
-        """Plot P&L breakdown (gamma, vega, theta)."""
         df = self.simulate_hedge_pnl(K, T, current_iv, forecast_iv)
         
         fig, ax = plt.subplots(figsize=(12, 6))
@@ -403,7 +231,6 @@ class DeltaHedger:
         return fig
     
     def print_hedge_summary(self, K, T, sigma, forecast_iv=None):
-        """Print summary of hedge position and exposure."""
         hedge = self.calculate_hedge_position(self.spot_price, K, T, sigma)
         
         print("\n" + "="*80)
@@ -432,33 +259,3 @@ class DeltaHedger:
             print(f"  Vega P&L:                ${vega_analysis['vega_pnl']:+.4f} ({vega_analysis['vega_pnl_pct']:+.1f}%)")
         
         print("\n" + "="*80)
-
-
-# Example usage
-if __name__ == '__main__':
-    # Example parameters
-    spot_price = 100
-    strike = 100
-    risk_free_rate = 0.05
-    dividend_yield = 0.02
-    sigma = 0.25
-    T = 0.5  # 6 months
-    
-    # Create hedger
-    hedger = DeltaHedger(spot_price, risk_free_rate, dividend_yield)
-    
-    # Calculate hedge position
-    hedge = hedger.calculate_hedge_position(spot_price, strike, T, sigma)
-    
-    print("Hedge Position:")
-    print(f"  Straddle Delta: {hedge['straddle_delta']:.6f}")
-    print(f"  Hedge Units: {abs(hedge['hedge_units']):.6f} shares ({hedge['hedge_direction']})")
-    print(f"  Delta Neutral: {'✓' if hedge['is_delta_neutral'] else '✗'}")
-    
-    # Analyze rehedge points
-    print("\nRehedge Analysis:")
-    rehedge_df = hedger.analyze_rehedge_points(strike, T, sigma, spot_range=0.10)
-    print(rehedge_df[rehedge_df['needs_rehedge']].to_string(index=False))
-    
-    # Print summary
-    hedger.print_hedge_summary(strike, T, sigma, forecast_iv=0.30)
