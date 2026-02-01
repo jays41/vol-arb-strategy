@@ -9,6 +9,7 @@ from implied_vol_surface import ImpliedVolSurface
 from Delta_Hedging import DeltaHedger
 from transactionCosts import TransactionCost
 from regime_identifier import RegimeBlockerXGB
+from earnings_blocker import EarningsBlocker
 from scipy.stats import norm
 
 warnings.filterwarnings('ignore', category=RuntimeWarning)
@@ -156,7 +157,13 @@ def get_iv_for_option(iv_calc, strike, maturity, call_price, put_price):
 def rolling_window_backtest(ticker, train_window=126, refit_frequency=21, 
                             starting_capital=100000, position_size=8000,
                             start_date=None, end_date=None,
-                            use_regime_blocker=True, verbose=False):
+                            use_regime_blocker=True,
+                            use_earnings_blocker=True,
+                            earnings_csv='earnings_data.csv',
+                            earnings_before=7, 
+                            earnings_after=2, 
+                            earnings_exit=3,
+                            verbose=False):
     
     print("="*80)
     print("SHORT VOL STRATEGY - 45 DTE STRADDLE BACKTEST")
@@ -206,6 +213,20 @@ def rolling_window_backtest(ticker, train_window=126, refit_frequency=21,
         return None
     
     print(f"\n[2/6] Computing historical IV percentiles...")
+    
+    if use_earnings_blocker:
+        print(f"\n[2.5/6] Initializing earnings blocker...")
+        earnings_blocker = EarningsBlocker(
+            ticker=ticker,
+            earnings_csv=earnings_csv,
+            before_days=earnings_before,
+            after_days=earnings_after,
+            exit_days=earnings_exit,
+            verbose=verbose
+        )
+    else:
+        print(f"\n[2.5/6] Earnings blocker disabled")
+        earnings_blocker = None
     
     regime_blocker = None
     if use_regime_blocker:
@@ -448,8 +469,12 @@ def rolling_window_backtest(ticker, train_window=126, refit_frequency=21,
             exit_reason = None
             option_pnl = active_position['entry_credit'] - current_straddle_value
             
+            # Check for forced exit due to earnings
+            if earnings_blocker and earnings_blocker.should_force_exit(current_date):
+                should_exit = True
+                exit_reason = earnings_blocker.get_block_reason()
             # Position-based stop loss (lose 2x premium collected)
-            if option_pnl < -2 * active_position['entry_credit']:
+            elif option_pnl < -2 * active_position['entry_credit']:
                 should_exit = True
                 exit_reason = f"Position stop loss (2x premium): P&L ${option_pnl:.0f}"
             elif days_held >= 14:
@@ -631,6 +656,11 @@ def rolling_window_backtest(ticker, train_window=126, refit_frequency=21,
                 entry_notes.append("Stress regime")
             
             if signal == 'SELL':
+                # Check earnings blocker
+                if earnings_blocker and earnings_blocker.should_block_entry(current_date):
+                    signal = 'HOLD'
+                    entry_notes.append(earnings_blocker.get_block_reason())
+                    continue
                 straddle_price_per_unit = atm_option['straddle_price'] * 100
                 num_straddles = max(1, int(position_size / straddle_price_per_unit))
                 entry_credit = straddle_price_per_unit * num_straddles
@@ -809,12 +839,153 @@ def rolling_window_backtest(ticker, train_window=126, refit_frequency=21,
     print(f"\n  Final Portfolio Value: ${portfolio_value:,.2f}")
     print(f"  Total Return:          {(portfolio_value - starting_capital) / starting_capital * 100:.2f}%")
     
+    if earnings_blocker:
+        earnings_blocker.print_stats()
+    
     print("\n  Backtest complete!")
     print("="*80)
     
     df_results.attrs['trade_log'] = df_trades
     
     return df_results
+
+
+def plot_short_vol_results(results_df, save_path='backtest_short_vol_analysis.png'):
+    if results_df is None or len(results_df) == 0:
+        print("  [!] No results to plot")
+        return
+
+    fig = plt.figure(figsize=(18, 14))
+    gs = fig.add_gridspec(4, 2, hspace=0.35, wspace=0.25)
+
+    # Prepare series
+    dates = pd.to_datetime(results_df['date'])
+    portfolio_values = results_df['portfolio_value'].astype(float).values
+    starting_value = float(portfolio_values[0])
+    running_max = pd.Series(portfolio_values).cummax()
+    drawdown = (portfolio_values - running_max) / running_max * 100
+
+    trade_log = results_df.attrs.get('trade_log', pd.DataFrame())
+
+    # 1) Portfolio value
+    ax1 = fig.add_subplot(gs[0, :])
+    ax1.plot(dates, portfolio_values, linewidth=2, color='#2E86AB', label='Portfolio Value')
+    ax1.fill_between(dates, starting_value, portfolio_values, alpha=0.25, color='#2E86AB')
+    ax1.axhline(y=starting_value, color='red', linestyle='--', alpha=0.5, label='Starting Capital')
+
+    if len(trade_log) > 0:
+        entry_dates = pd.to_datetime(trade_log['entry_date'])
+        exit_dates = pd.to_datetime(trade_log['exit_date'])
+
+        # Mark entries/exits (limit legend spam)
+        ax1.scatter(entry_dates, np.interp(mdates.date2num(entry_dates), mdates.date2num(dates), portfolio_values),
+                    s=18, color='#E63946', alpha=0.75, label='Trade Entry')
+        ax1.scatter(exit_dates, np.interp(mdates.date2num(exit_dates), mdates.date2num(dates), portfolio_values),
+                    s=18, color='#6A994E', alpha=0.75, label='Trade Exit')
+
+    ax1.set_title('Portfolio Value Over Time (Short Vol Strategy)', fontsize=14, fontweight='bold')
+    ax1.set_ylabel('Portfolio Value ($)', fontsize=11)
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(ncols=3)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+
+    # 2) Drawdown
+    ax2 = fig.add_subplot(gs[1, :])
+    ax2.fill_between(dates, 0, drawdown, color='#A23B72', alpha=0.7)
+    ax2.plot(dates, drawdown, linewidth=1.5, color='#A23B72')
+    ax2.set_title('Drawdown (%)', fontsize=13, fontweight='bold')
+    ax2.set_ylabel('Drawdown (%)', fontsize=11)
+    ax2.grid(True, alpha=0.3)
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+
+    # 3) Trade P&L distribution
+    ax3 = fig.add_subplot(gs[2, 0])
+    if len(trade_log) > 0 and 'net_pnl' in trade_log.columns:
+        pnls = trade_log['net_pnl'].astype(float).values
+        ax3.hist(pnls, bins=24, alpha=0.75, edgecolor='black', color='#E63946')
+        ax3.axvline(x=0, color='black', linestyle='--', linewidth=2, label='Break-even')
+        ax3.set_title('Trade Net P&L Distribution', fontsize=12, fontweight='bold')
+        ax3.set_xlabel('Net P&L ($)', fontsize=10)
+        ax3.set_ylabel('Frequency', fontsize=10)
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+    else:
+        ax3.axis('off')
+        ax3.text(0.5, 0.5, 'No completed trades to plot', ha='center', va='center')
+
+    # 4) Exit reasons
+    ax4 = fig.add_subplot(gs[2, 1])
+    if len(trade_log) > 0 and 'exit_reason' in trade_log.columns:
+        reason_counts = trade_log['exit_reason'].value_counts().head(8)
+        ax4.barh(reason_counts.index[::-1], reason_counts.values[::-1], color='#2E86AB', alpha=0.8, edgecolor='black')
+        ax4.set_title('Top Exit Reasons', fontsize=12, fontweight='bold')
+        ax4.set_xlabel('Count', fontsize=10)
+        ax4.grid(True, alpha=0.3, axis='x')
+    else:
+        ax4.axis('off')
+
+    # 5) Forecast vs Market IV + SELL signals
+    ax5 = fig.add_subplot(gs[3, 0])
+    if 'forecast_iv' in results_df.columns and 'market_iv' in results_df.columns:
+        forecast_iv = results_df['forecast_iv'].astype(float).values * 100
+        market_iv = results_df['market_iv'].astype(float).ffill().values * 100
+
+        ax5.plot(dates, forecast_iv, label='Forecast (EGARCH + RP)', linewidth=2, color='#2E86AB', alpha=0.85)
+        ax5.plot(dates, market_iv, label='Market IV', linewidth=2, color='#F18F01', alpha=0.85)
+
+        if 'signal' in results_df.columns:
+            sell_mask = (results_df['signal'] == 'SELL').values
+            if sell_mask.any():
+                ax5.fill_between(dates, 0, np.maximum(forecast_iv.max(), market_iv.max()) * 1.2,
+                                 where=sell_mask, color='#E63946', alpha=0.10, label='SELL signal')
+
+        ax5.set_title('Forecast vs Market IV (Signals Highlighted)', fontsize=12, fontweight='bold')
+        ax5.set_ylabel('Implied Volatility (%)', fontsize=10)
+        ax5.legend()
+        ax5.grid(True, alpha=0.3)
+        ax5.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    else:
+        ax5.axis('off')
+
+    # 6) Metrics summary
+    ax6 = fig.add_subplot(gs[3, 1])
+    ax6.axis('off')
+
+    daily_returns = pd.Series(portfolio_values).pct_change().dropna()
+    sharpe = 0.0
+    max_dd = float(drawdown.min() / 100) if len(drawdown) > 0 else 0.0
+    if len(daily_returns) > 0 and daily_returns.std() > 0:
+        sharpe = (daily_returns.mean() / daily_returns.std()) * np.sqrt(252)
+
+    total_return = (portfolio_values[-1] - starting_value) / starting_value
+    years = max(1e-9, (dates.iloc[-1] - dates.iloc[0]).days / 365.0)
+    annual_return = (portfolio_values[-1] / starting_value) ** (1 / years) - 1
+
+    total_trades = int(len(trade_log)) if len(trade_log) > 0 else 0
+    win_rate = float((trade_log['net_pnl'] > 0).mean() * 100) if total_trades > 0 and 'net_pnl' in trade_log.columns else 0.0
+    total_net_pnl = float(trade_log['net_pnl'].sum()) if total_trades > 0 and 'net_pnl' in trade_log.columns else 0.0
+
+    metrics_text = f"""
+SHORT VOL PERFORMANCE SUMMARY
+
+Total Return:        {total_return*100:>7.2f}%
+Annualized Return:   {annual_return*100:>7.2f}%
+Sharpe (daily):      {sharpe:>7.3f}
+Max Drawdown:        {max_dd*100:>7.2f}%
+
+Total Trades:        {total_trades:>7}
+Win Rate:            {win_rate:>7.1f}%
+Total Net P&L:       ${total_net_pnl:>10,.2f}
+"""
+
+    ax6.text(0.06, 0.5, metrics_text, fontsize=11, family='monospace',
+             verticalalignment='center', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+
+    plt.suptitle('Short Vol Strategy - Performance Dashboard', fontsize=16, fontweight='bold', y=0.995)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"\n  * Charts saved to {save_path}")
+    plt.close()
 
 
 if __name__ == "__main__":
@@ -837,7 +1008,8 @@ if __name__ == "__main__":
         use_regime_blocker=True,
         start_date=None,
         end_date=None,
-        verbose=True
+        verbose=True,
+        earnings_csv=f'{ticker.lower()}_earnings_dates.csv'
     )
     
     if results is not None:
@@ -848,3 +1020,5 @@ if __name__ == "__main__":
         if len(trade_log) > 0:
             trade_log.to_csv(f"trade_log_{ticker.lower()}_SHORT_VOL.csv", index=False)
             print(f"Trade log saved to trade_log_{ticker.lower()}_SHORT_VOL.csv")
+
+        plot_short_vol_results(results, save_path=f"backtest_short_vol_{ticker.lower()}_analysis.png")
